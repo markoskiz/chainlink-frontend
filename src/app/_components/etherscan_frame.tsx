@@ -34,9 +34,11 @@ interface EventSignature {
   }>;
 }
 
-// Event signatures for ChainLinkCasino
+/* ─────────────────────────────────────────────────────────
+   Event signatures for ChainLinkCasino
+───────────────────────────────────────────────────────── */
 const EVENT_SIGNATURES: Record<string, EventSignature> = {
-  // PlayRequested event signature
+  /* PlayRequested(address indexed player, uint256 requestId) */
   "0x73f510d31b54bae7d1bbc1a42b23ddc86a4497e0d01cba61cd12978cfb19e194": {
     name: "PlayRequested",
     signature: "PlayRequested(address indexed player, uint256 requestId)",
@@ -45,16 +47,16 @@ const EVENT_SIGNATURES: Record<string, EventSignature> = {
       { name: "requestId", type: "uint256", indexed: false }
     ]
   },
-  // PlayResult event signature  
+  /* PlayResult(address indexed player, uint8 number) */
   "0x355703094d447d022aec112b23be648497e0d01cbcae1d9612678fa9ae16c6a2": {
-    name: "PlayResult", 
+    name: "PlayResult",
     signature: "PlayResult(address indexed player, uint8 number)",
     inputs: [
       { name: "player", type: "address", indexed: true },
       { name: "number", type: "uint8", indexed: false }
     ]
   },
-  // VRF fulfillRandomWords - this is the actual VRF callback
+  /* fulfillRandomWords(uint256 requestId, uint256[] randomWords) */
   "0x7dffc5ae5ee4e2e4df1651cf6ad329a73cebdb728f37ea0187b9b17e036756e4": {
     name: "fulfillRandomWords",
     signature: "fulfillRandomWords(uint256 requestId, uint256[] randomWords)",
@@ -65,73 +67,61 @@ const EVENT_SIGNATURES: Record<string, EventSignature> = {
   }
 };
 
+/* ─────────────────────────────────────────────────────────
+   Helpers
+───────────────────────────────────────────────────────── */
 async function fetchContractEvents(address: string): Promise<EtherscanEvent[]> {
-  const url = `${ETHERSCAN_API_URL}?module=logs&action=getLogs&address=${address}&fromBlock=0&toBlock=latest&apikey=${ETHERSCAN_API_KEY}`;
+  const url =
+    `${ETHERSCAN_API_URL}?module=logs&action=getLogs&address=${address}` +
+    `&fromBlock=0&toBlock=latest&apikey=${ETHERSCAN_API_KEY}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error("Failed to fetch events");
   const data = await res.json();
   if (data.status === "0") {
-    if (data.message && data.message.includes("No records found")) return [];
+    if (data.message?.includes("No records found")) return [];
     throw new Error(data.message || "Unknown error");
   }
-  return (data.result || []).reverse(); // Most recent first
+  return (data.result || []).reverse(); // newest first
 }
 
 function parseEventData(event: EtherscanEvent): ParsedEvent {
-  // Safety check for topics array
-  if (!event.topics || event.topics.length === 0) {
-    return {
-      eventName: "Unknown",
-      eventSignature: "Unknown Event",
-      decodedData: {}
-    };
-  }
+  /* topics[0] = keccak256(signature) */
+  const sigHash = event.topics?.[0];
+  const eventSig = sigHash ? EVENT_SIGNATURES[sigHash] : undefined;
 
-  const eventSig = EVENT_SIGNATURES[event.topics[0] as keyof typeof EVENT_SIGNATURES];
-  
   if (!eventSig) {
-    return {
-      eventName: "Unknown",
-      eventSignature: "Unknown Event",
-      decodedData: {}
-    };
+    return { eventName: "Unknown", eventSignature: "Unknown", decodedData: {} };
   }
 
-  const decodedData: { [key: string]: any } = {};
-  
-  // Parse indexed parameters (from topics)
-  let topicIndex = 1;
-  eventSig.inputs.forEach((input, index) => {
+  const decodedData: Record<string, any> = {};
+  /* topic index starts at 1 for indexed params */
+  let topicPtr = 1;
+
+  for (const input of eventSig.inputs) {
     if (input.indexed) {
-      if (topicIndex < event.topics.length && event.topics[topicIndex]) {
-        if (input.type === "address") {
-          decodedData[input.name] = "0x" + event.topics[topicIndex].slice(26);
-        } else {
-          decodedData[input.name] = event.topics[topicIndex];
-        }
-        topicIndex++;
+      const topic = event.topics?.[topicPtr];
+      if (topic) {
+        decodedData[input.name] =
+          input.type === "address" ? `0x${topic.slice(26)}` : topic;
       }
-    } else {
-      // Parse non-indexed parameters (from data)
-      if (event.data && event.data !== "0x") {
-        try {
-          if (input.type.includes("uint")) {
-            const parsed = parseInt(event.data, 16);
-            decodedData[input.name] = parsed;
-            
-            // For PlayResult, also calculate the roulette number
-            if (eventSig.name === "PlayResult" && input.name === "number") {
-              decodedData.rouletteNumber = parsed;
-            }
-          } else {
-            decodedData[input.name] = event.data;
+      topicPtr++;
+    } else if (event.data && event.data !== "0x") {
+      /* naive parse: full data blob represents the first non-indexed arg */
+      try {
+        if (input.type.startsWith("uint")) {
+          const val = BigInt(event.data);
+          decodedData[input.name] = val.toString();
+          if (eventSig.name === "PlayResult" && input.name === "number") {
+            decodedData.rouletteNumber = Number(val);
           }
-        } catch (e) {
+        } else {
           decodedData[input.name] = event.data;
         }
+      } catch {
+        decodedData[input.name] = event.data;
       }
     }
-  });
+  }
 
   return {
     eventName: eventSig.name,
@@ -142,17 +132,21 @@ function parseEventData(event: EtherscanEvent): ParsedEvent {
 
 function formatTimeAgo(timestamp: string): string {
   const now = Math.floor(Date.now() / 1000);
-  const eventTime = parseInt(timestamp);
-  const diff = now - eventTime;
+  const diff = now - Number(timestamp);
 
-  if (diff < 60) return `${diff} secs ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`;
-  return `${Math.floor(diff / 86400)} days ago`;
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
+/* ─────────────────────────────────────────────────────────
+   Main Component
+───────────────────────────────────────────────────────── */
 export function EtherscanEventsTab() {
-  const [address, setAddress] = useState("0xB4BCbE5Fb9117683c58549C4669894B6f38B11F0");
+  const [address, setAddress] = useState(
+    "0xB4BCbE5Fb9117683c58549C4669894B6f38B11F0"
+  );
   const [events, setEvents] = useState<EtherscanEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -162,39 +156,31 @@ export function EtherscanEventsTab() {
     setLoading(true);
     setError(null);
     try {
-      const fetchedEvents = await fetchContractEvents(address);
-      setEvents(fetchedEvents);
-    } catch (err: any) {
-      setError(err.message);
+      const fetched = await fetchContractEvents(address);
+      setEvents(fetched);
+    } catch (e: any) {
+      setError(e.message);
     } finally {
       setLoading(false);
     }
   };
 
-  // Auto-refresh every 10 seconds when enabled
+  /* auto-refresh */
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(handleFetch, 10000);
-    return () => clearInterval(interval);
+    const id = setInterval(handleFetch, 10_000);
+    return () => clearInterval(id);
   }, [autoRefresh, address]);
 
-  // Initial fetch
+  /* initial load */
   useEffect(() => {
-    if (address) {
-      handleFetch();
-    }
+    if (address) handleFetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const toggleAutoRefresh = () => {
-    setAutoRefresh(!autoRefresh);
-    if (!autoRefresh) {
-      handleFetch(); // Fetch immediately when enabling
-    }
-  };
 
   return (
     <div className="w-full max-w-6xl bg-gray-900 text-white">
-      {/* Header */}
+      {/* header */}
       <div className="bg-gray-800 p-4 rounded-t-lg border-b border-gray-700">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center space-x-4">
@@ -206,11 +192,14 @@ export function EtherscanEventsTab() {
           </div>
           <div className="flex items-center space-x-2">
             <button
-              onClick={toggleAutoRefresh}
-              className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+              onClick={() => {
+                setAutoRefresh((v) => !v);
+                if (!autoRefresh) handleFetch();
+              }}
+              className={`px-3 py-1 rounded text-sm font-medium ${
                 autoRefresh
-                  ? "bg-green-600 text-white"
-                  : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                  ? "bg-green-600"
+                  : "bg-gray-700 hover:bg-gray-600 text-gray-300"
               }`}
             >
               {autoRefresh ? "● Auto-refresh ON" : "Auto-refresh OFF"}
@@ -218,48 +207,44 @@ export function EtherscanEventsTab() {
             <button
               onClick={handleFetch}
               disabled={loading}
-              className="px-3 py-1 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:bg-gray-600"
+              className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium disabled:bg-gray-600"
             >
-              {loading ? "Loading..." : "Refresh"}
+              {loading ? "Loading…" : "Refresh"}
             </button>
           </div>
         </div>
-
-        <div className="flex space-x-4">
-          <input
-            type="text"
-            placeholder="Contract address"
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-            className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm"
-            disabled={autoRefresh}
-          />
-        </div>
-
+        {/* address input */}
+        <input
+          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm"
+          placeholder="Contract address"
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          disabled={autoRefresh}
+        />
         <p className="text-xs text-gray-500 mt-2">
-          Tip: Logs are used by developers/external UI providers for keeping track of contract actions and for auditing
+          Tip: Logs keep track of contract actions for auditing.
         </p>
       </div>
 
       {error && (
         <div className="bg-red-900/50 border border-red-600 p-3 m-4 rounded">
-          <p className="text-red-400 text-sm">{error}</p>
+          <p className="text-sm text-red-400">{error}</p>
         </div>
       )}
 
-      {/* Events Table */}
+      {/* table */}
       <div className="bg-gray-800">
-        {/* Table Header */}
+        {/* header */}
         <div className="grid grid-cols-6 gap-4 p-4 border-b border-gray-700 text-sm font-medium text-gray-400">
-          <div>Transaction Hash</div>
+          <div>Tx Hash</div>
           <div>Block</div>
           <div>Age</div>
           <div>Method</div>
           <div>Logs</div>
-          <div></div>
+          <div />
         </div>
 
-        {/* Table Body */}
+        {/* body */}
         <div className="max-h-96 overflow-y-auto">
           {events.length === 0 && !loading && (
             <div className="p-8 text-center text-gray-500">
@@ -267,125 +252,98 @@ export function EtherscanEventsTab() {
             </div>
           )}
 
-          {events.map((event, index) => {
-            const parsedEvent = parseEventData(event);
-            const blockNum = parseInt(event.blockNumber, 16);
-            const timeAgo = formatTimeAgo(event.timeStamp);
+          {events.map((ev) => {
+            const parsed = parseEventData(ev);
+            const block = parseInt(ev.blockNumber, 16);
 
             return (
-              <div key={`${event.transactionHash}-${event.logIndex}`} className="border-b border-gray-700">
+              <div
+                key={`${ev.transactionHash}-${ev.logIndex}`}
+                className="border-b border-gray-700"
+              >
                 <div className="grid grid-cols-6 gap-4 p-4 text-sm hover:bg-gray-750">
-                  {/* Transaction Hash */}
+                  {/* tx */}
                   <div className="text-blue-400">
                     <a
-                      href={`https://sepolia.etherscan.io/tx/${event.transactionHash}`}
+                      href={`https://sepolia.etherscan.io/tx/${ev.transactionHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="hover:underline"
                     >
-                      {event.transactionHash.slice(0, 10)}...
+                      {ev.transactionHash.slice(0, 10)}…
                     </a>
                   </div>
-
-                  {/* Block */}
+                  {/* block */}
                   <div className="text-blue-400">
                     <a
-                      href={`https://sepolia.etherscan.io/block/${blockNum}`}
+                      href={`https://sepolia.etherscan.io/block/${block}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="hover:underline"
                     >
-                      {blockNum}
+                      {block}
                     </a>
                   </div>
-
-                  {/* Age */}
-                  <div className="text-gray-300">{timeAgo}</div>
-
-                  {/* Method */}
+                  {/* age */}
+                  <div className="text-gray-300">
+                    {formatTimeAgo(ev.timeStamp)}
+                  </div>
+                  {/* method */}
                   <div className="text-green-400 flex items-center">
                     <span className="mr-2">***</span>
-                    {parsedEvent.eventName === "Unknown" ? "Unknown Method" : parsedEvent.eventName}
+                    {parsed.eventName === "Unknown"
+                      ? "Unknown"
+                      : parsed.eventName}
                   </div>
-
-                  {/* Logs */}
-                  <div className="text-blue-400">
-                    <span className="cursor-pointer hover:underline">
-                      {parsedEvent.eventName}
-                    </span>
-                    <span className="text-gray-500">
-                      (index_topic_1{" "}
-                      <span className="text-teal-400">address</span>{" "}
-                      <span className="text-orange-400">player</span>,{" "}
-                      {parsedEvent.eventName === "PlayRequested" ? (
-                        <>
-                          <span className="text-purple-400">uint256</span>{" "}
-                          <span className="text-orange-400">requestId</span>
-                        </>
-                      ) : parsedEvent.eventName === "PlayResult" ? (
-                        <>
-                          <span className="text-purple-400">uint8</span>{" "}
-                          <span className="text-orange-400">number</span>
-                        </>
-                      ) : (
-                        <span className="text-gray-400">unknown</span>
-                      )}
-                      )
-                    </span>
+                  {/* logs (brief) */}
+                  <div className="text-blue-400 truncate">
+                    {parsed.eventName}
                   </div>
-
-                  {/* Expand/Details */}
-                  <div className="text-gray-500">
-                    {/* This could be used for expand/collapse functionality */}
-                  </div>
+                  <div />
                 </div>
 
-                {/* Event Details */}
-                <div className="px-4 pb-4 bg-gray-850">
-                  <div className="text-xs space-y-1">
-                    {/* Topics */}
-                    <div className="grid grid-cols-12 gap-2">
-                      <div className="col-span-2 text-gray-500">[topic0]</div>
+                {/* expanded topics + data */}
+                <div className="px-4 pb-4 bg-gray-850 text-xs space-y-1">
+                  {/* topics */}
+                  {ev.topics.map((topic, i) => (
+                    <div
+                      key={i}
+                      className="grid grid-cols-12 gap-2 break-all"
+                    >
+                      <div className="col-span-2 text-gray-500">
+                        [topic{i}]
+                      </div>
                       <div className="col-span-10 font-mono text-gray-300">
-                        {event.topics[0]}
+                        {topic}
                       </div>
                     </div>
-                    
-                    {event.topics.slice(1).map((topic, idx) => (
-                      <div key={idx} className="grid grid-cols-12 gap-2">
-                        <div className="col-span-2 text-gray-500">[topic{idx + 1}]</div>
-                        <div className="col-span-10 font-mono text-gray-300">{topic}</div>
-                      </div>
-                    ))}
+                  ))}
 
-                    {/* Data */}
-                    {event.data && event.data !== "0x" && (
-                      <div className="grid grid-cols-12 gap-2 border-t border-gray-700 pt-2">
-                        <div className="col-span-2 text-gray-500"></div>
-                        <div className="col-span-2 text-gray-500">Data</div>
-                        <div className="col-span-6 font-mono text-gray-300 break-all">
-                          {event.data}
-                        </div>
-                        <div className="col-span-2 text-gray-500"></div>
-                        <div className="col-span-2 text-right">
-                          {parsedEvent.eventName === "PlayResult" ? (
-                            <span className="text-red-500 font-bold text-lg">
-                              🎲 Roulette Pick: {parsedEvent.decodedData.number}
-                            </span>
-                          ) : parsedEvent.eventName === "PlayRequested" ? (
-                            <span className="text-blue-400">
-                              Request ID: {parsedEvent.decodedData.requestId}
-                            </span>
-                          ) : (
-                            <span className="text-green-400">
-                              Decoded: {parseInt(event.data, 16)}
-                            </span>
-                          )}
-                        </div>
-                        <div className="col-span-6"></div>
+                  {/* data */}
+                  {ev.data && ev.data !== "0x" && (
+                    <div className="grid grid-cols-12 gap-2 border-t border-gray-700 pt-2 break-all">
+                      <div className="col-span-2" />
+                      <div className="col-span-2 text-gray-500">Data</div>
+                      <div className="col-span-6 font-mono text-gray-300">
+                        {ev.data}
                       </div>
-                    )}
-                  </div>
+                      <div className="col-span-2 text-right">
+                        {parsed.eventName === "PlayResult" ? (
+                          <span className="text-red-500 font-bold">
+                            🎲 Pick: {parsed.decodedData.number}
+                          </span>
+                        ) : parsed.eventName === "PlayRequested" ? (
+                          <span className="text-blue-400">
+                            ReqID: {parsed.decodedData.requestId}
+                          </span>
+                        ) : (
+                          <span className="text-green-400">
+                            Decoded: {parseInt(ev.data, 16)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -393,11 +351,15 @@ export function EtherscanEventsTab() {
         </div>
       </div>
 
-      {/* Footer */}
+      {/* footer */}
       {events.length > 0 && (
         <div className="bg-gray-800 p-4 rounded-b-lg border-t border-gray-700 text-xs text-gray-500">
-          Latest {events.length} events • 
-          {autoRefresh && <span className="ml-1 text-green-400">Auto-refreshing every 10 seconds</span>}
+          Latest {events.length} events •{" "}
+          {autoRefresh && (
+            <span className="ml-1 text-green-400">
+              Auto-refresh every 10 s
+            </span>
+          )}
         </div>
       )}
     </div>
