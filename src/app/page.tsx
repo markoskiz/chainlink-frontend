@@ -16,13 +16,13 @@ export default async function Home() {
           <h1 className="text-5xl font-extrabold tracking-tight sm:text-[5rem]">
             Digitalni Valuti | Chainlink <span className="text-[hsl(280,100%,70%)]">Casino</span>
           </h1>
-            <div className="bg-gray-900 flex flex-col md:flex-row w-full gap-8">
-  <div className="flex-1">
-    <RouletteWheel />
-  </div>
-  <div className="flex-1 md:flex-[2] flex justify-center md:justify-end">
-    <EtherscanEventsTab />
-  </div>
+            <<div className="bg-gray-900 flex flex-col lg:flex-row w-full gap-8">
+            <div className="w-full lg:flex-1">
+              <RouletteWheel />
+            </div>
+            <div className="w-full lg:flex-[2]">
+              <EtherscanEventsTab />
+            </div>
 </div>
 
             </div>
