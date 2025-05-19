@@ -16,13 +16,15 @@ export default async function Home() {
           <h1 className="text-5xl font-extrabold tracking-tight sm:text-[5rem]">
             Digitalni Valuti | Chainlink <span className="text-[hsl(280,100%,70%)]">Casino</span>
           </h1>
-            <div className="bg-gray-900"style={{ display: "flex", flexDirection: "row", width: "100%", gap: "2rem" }}>
-            <div style={{ flex: 1 }}>
-              <RouletteWheel />
-            </div>
-            <div style={{ flex: 2, display: "flex", justifyContent: "flex-end" }}>
-              <EtherscanEventsTab />
-            </div>
+            <div className="bg-gray-900 flex flex-col md:flex-row w-full gap-8">
+  <div className="flex-1">
+    <RouletteWheel />
+  </div>
+  <div className="flex-1 md:flex-[2] flex justify-center md:justify-end">
+    <EtherscanEventsTab />
+  </div>
+</div>
+
             </div>
          
           {/* <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-8">
